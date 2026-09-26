@@ -5,7 +5,7 @@ from typing import Any
 
 from aiogram import Bot
 
-from app.rabbit import rabbit
+from services.app.rabbit import rabbit
 
 logger = logging.getLogger(__name__)
 
@@ -22,5 +22,5 @@ async def consume_and_send(bot: Bot) -> None:
         await bot.send_message(chat_id=int(chat_id), text=text)
         logger.info("sent to telegram chat_id=%s text=%r", chat_id, text)
 
-    logger.info("bot consumer started, waiting for messages")
+    logger.info("notification consumer started, waiting for messages")
     await rabbit.consume(on_message)

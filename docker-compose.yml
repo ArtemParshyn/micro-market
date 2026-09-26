@@ -1,36 +1,66 @@
 services:
-  rabbitmq:
-    image: rabbitmq:3-management
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    healthcheck:
-      test: rabbitmq-diagnostics -q ping
-      interval: 10s
-      timeout: 10s
-      retries: 10
+  #rabbitmq:
+  #  image: rabbitmq:3-management
+  #  ports:
+  #    - "5672:5672"
+  #    - "15672:15672"
+  #  healthcheck:
+  #    test: rabbitmq-diagnostics -q ping
+  #    interval: 10s
+  #    timeout: 10s
+  #    retries: 10
 
-  api:
-    build: .
+  app_catalog:
+    build:
+      context: .
+      dockerfile: services/catalog/Dockerfile
+    command: [ "sh", "-c", "alembic -c services/catalog/migrations/alembic.ini upgrade head && uvicorn services.catalog.main:app --host 0.0.0.0 --port 8000" ]
+    env_file:
+      - services/catalog/.env
     ports:
       - "8000:8000"
-    env_file:
-      - .env
-    environment:
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
     depends_on:
-      rabbitmq:
+      db_catalog:
         condition: service_healthy
-    restart: unless-stopped
 
-  bot:
-    build: .
-    command: ["python", "-m", "bot"]
-    env_file:
-      - .env
-    environment:
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    restart: unless-stopped
+  db_catalog:
+    image: postgres:16-alpine
+    env_file: services/catalog/.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+#  api:
+#    build: .
+#    ports:
+#      - "8000:8000"
+#    env_file:
+#      - .env
+#    environment:
+#      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+#    depends_on:
+#      rabbitmq:
+#        condition: service_healthy
+#    restart: unless-stopped
+
+#  bot:
+#    build: .
+#    command: ["python", "-m", "notification"]
+#    env_file:
+#      - .env
+#    environment:
+#      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+#    depends_on:
+#      rabbitmq:
+#        condition: service_healthy
+#    restart: unless-stopped
+
+
+volumes:
+  pgdata:

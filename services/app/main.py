@@ -3,9 +3,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.config import QUEUE_TG
-from app.rabbit import rabbit
-from app.schemas import SendMessage
+from services.notification.config import settings
+from services.app.rabbit import rabbit
+from services.app.schemas import SendMessage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,8 +26,7 @@ app = FastAPI(title="FastAPI → Telegram", lifespan=lifespan)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "queue": QUEUE_TG}
-
+    return {"status": "ok", "queue": settings.queue_tg}
 
 @app.post("/send")
 async def send(msg: SendMessage):

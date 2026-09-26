@@ -9,7 +9,7 @@ import aio_pika
 from aio_pika import Message
 from aio_pika.abc import AbstractChannel, AbstractQueue, AbstractRobustConnection
 
-from app.config import QUEUE_TG, RABBITMQ_URL
+from services.notification.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +23,10 @@ class Rabbit:
         self.queue: AbstractQueue | None = None
 
     async def connect(self) -> None:
-        self.connection = await aio_pika.connect_robust(RABBITMQ_URL)
+        self.connection = await aio_pika.connect_robust(settings.rabbit_url)
         self.channel = await self.connection.channel()
-        self.queue = await self.channel.declare_queue(QUEUE_TG, durable=True)
-        logger.info("RabbitMQ connected, queue=%s", QUEUE_TG)
+        self.queue = await self.channel.declare_queue(settings.queue_tg, durable=True)
+        logger.info("RabbitMQ connected, queue=%s", settings.queue_tg)
 
     async def close(self) -> None:
         if self.connection and not self.connection.is_closed:
@@ -39,7 +39,7 @@ class Rabbit:
 
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         message = Message(body, delivery_mode=aio_pika.DeliveryMode.PERSISTENT)
-        await self.channel.default_exchange.publish(message, routing_key=QUEUE_TG)
+        await self.channel.default_exchange.publish(message, routing_key=settings.queue_tg)
 
     async def consume(self, handler: MessageHandler) -> None:
         if self.queue is None:

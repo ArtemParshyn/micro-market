@@ -1,4 +1,4 @@
-"""Точка входа бота: python -m bot"""
+"""Точка входа бота: python -m notification"""
 
 import asyncio
 import logging
@@ -6,9 +6,9 @@ import sys
 
 from aiogram import Bot
 
-from app.config import BOT_TOKEN
-from app.rabbit import rabbit
-from bot.worker import consume_and_send
+from services.notification.config import settings
+from services.app.rabbit import rabbit
+from services.notification.worker import consume_and_send
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,11 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    if not BOT_TOKEN:
+    if not settings.bot_token:
         logger.error("BOT_TOKEN is missing. Set it in .env or compose environment.")
         sys.exit(1)
 
-    bot = Bot(token=BOT_TOKEN)
+    bot = Bot(token=settings.bot_token)
     await rabbit.connect()
 
     try:
