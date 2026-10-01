@@ -1,10 +1,10 @@
 from fastapi import APIRouter
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from dependencies import DbSession
-from services.catalog.app.schemes import ResponseProduct, RequestCreateProduct, ResponseCategory, RequestCreateCategory
+from services.catalog.app.schemes import ResponseProduct, RequestCreateProduct, ResponseCategory, RequestCreateCategory, \
+    ImageUploadRequest, ImageResponse, ImageConfirmRequest
 from services.catalog.app.service import service_get_products, service_create_products, service_get_all_categories, \
-    service_create_category, service_get_all_products_via_category, service_get_product
+    service_create_category, service_get_all_products_via_category, service_get_product, service_get_upload_url, \
+    service_confirm_image
+from services.catalog.db.database import DbSession
 
 router = APIRouter()
 
@@ -31,3 +31,11 @@ async def create_category(db: DbSession, category: RequestCreateCategory):
 @router.get("/categories/{id_category}/products", response_model=list[ResponseProduct])
 async def get_all_products_via_category(db: DbSession, id_category: int):
     return await service_get_all_products_via_category(db=db, id_category=id_category)
+
+@router.post("/images/upload-url", response_model=ImageResponse)
+async def get_upload_url(uploadrequest: ImageUploadRequest):
+    return await service_get_upload_url(uploadrequest=uploadrequest)
+
+@router.post("/images/confirm", response_model=dict)
+async def confirm_image(image: ImageConfirmRequest):
+    return await service_confirm_image(image=image)

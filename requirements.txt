@@ -8,3 +8,5 @@ asyncpg
 alembic
 pydantic-settings
 pydantic
+celery[crypto]
+kombu

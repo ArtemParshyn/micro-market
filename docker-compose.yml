@@ -1,14 +1,32 @@
 services:
-  #rabbitmq:
-  #  image: rabbitmq:3-management
-  #  ports:
-  #    - "5672:5672"
-  #    - "15672:15672"
-  #  healthcheck:
-  #    test: rabbitmq-diagnostics -q ping
-  #    interval: 10s
-  #    timeout: 10s
-  #    retries: 10
+  rabbitmq:
+    image: rabbitmq:3-management
+    env_file:
+      - .env
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    env_file:
+      - "services/catalog/.env"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   app_catalog:
     build:
@@ -26,15 +44,29 @@ services:
   db_catalog:
     image: postgres:16-alpine
     env_file: services/catalog/.env
+    environment:
+      POSTGRES_USER: catalog
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U catalog"]
       interval: 5s
       timeout: 5s
       retries: 10
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: services/catalog/Dockerfile
+    command: celery -A services.catalog.celery worker -l info --include=services.catalog.tasks
+    env_file:
+      - services/catalog/.env
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: unless-stopped
 
 #  api:
 #    build: .
@@ -64,3 +96,4 @@ services:
 
 volumes:
   pgdata:
+  minio_data:
