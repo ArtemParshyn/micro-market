@@ -8,31 +8,69 @@ from minio.commonconfig import CopySource
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.catalog.app.schemes import RequestCreateProduct, RequestCreateCategory, ImageUploadRequest, \
-    ImageConfirmRequest
-from services.catalog.db.models import Product
-from services.catalog.db.repository import db_get_all_products, db_create_products, db_get_product, \
-    db_get_all_categories, db_create_category, db_get_all_products_via_category
+from services.catalog.app.schemes import (
+    RequestCreateProduct,
+    RequestCreateCategory,
+    ImageUploadRequest,
+    ImageConfirmRequest,
+    RequestCreateModifier,
+)
+from services.catalog.db.models import Product, Modifier
+from services.catalog.db.repository import (
+    db_get_all_products,
+    db_create_products,
+    db_get_product,
+    db_get_all_categories,
+    db_create_category,
+    db_get_category,
+    db_get_all_products_via_category,
+    db_update_product_availability,
+    db_get_all_modifiers,
+    db_create_modifier,
+    db_update_modifier_availability,
+    db_get_modifiers_by_ids,
+)
 from services.catalog.tasks import client as minio_client
 
 BUCKET = "catalog-images"
 
 
-async def service_get_product(db: AsyncSession, id_product: int):
-    product_obj = await db_get_product(db=db, id_product=id_product)
+def _attach_image_url(product_obj: Product) -> Product:
     if product_obj.image_object_name:
-        product_obj.image_url = minio_client.presigned_get_object(
-            bucket_name=BUCKET,
-            object_name=product_obj.image_object_name,
-            expires=timedelta(hours=1),
-        )
+        try:
+            product_obj.image_url = minio_client.presigned_get_object(
+                bucket_name=BUCKET,
+                object_name=product_obj.image_object_name,
+                expires=timedelta(hours=1),
+            )
+        except Exception:
+            product_obj.image_url = None
     else:
         product_obj.image_url = None
     return product_obj
 
 
-async def service_get_products(db: AsyncSession):
-    return await db_get_all_products(db)
+async def service_get_product(db: AsyncSession, id_product: int) -> Product:
+    product_obj = await db_get_product(db=db, id_product=id_product)
+    if not product_obj:
+        raise HTTPException(status_code=404, detail="Product not found")
+    return _attach_image_url(product_obj)
+
+
+async def service_get_products(db: AsyncSession, available_only: bool = False) -> list[Product]:
+    products = await db_get_all_products(db, available_only=available_only)
+    for p in products:
+        _attach_image_url(p)
+    return products
+
+
+async def service_update_product_availability(db: AsyncSession, id_product: int, is_available: bool) -> Product:
+    product = await db_update_product_availability(db=db, id_product=id_product, is_available=is_available)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    await db.commit()
+    await db.refresh(product)
+    return _attach_image_url(product)
 
 
 async def validate_image_in_minio(object_name: str, size: int, mime: str) -> None:
@@ -71,21 +109,23 @@ async def service_get_upload_url(uploadrequest: ImageUploadRequest) -> dict:
 
 
 async def service_create_products(db: AsyncSession, product: RequestCreateProduct) -> Product:
-    # 1. Создаём товар
-    product_obj = Product(
-        name=product.name,
-        price=product.price,
-        description=product.description,
-        category_id=product.category_id,
-    )
-    db.add(product_obj)
-    await db.flush()  # получаем product_obj.id
+    # 1. Проверяем существование категории
+    category = await db_get_category(db, product.category_id)
+    if not category:
+        raise HTTPException(status_code=404, detail=f"Category {product.category_id} not found")
 
-    # 2. Если передано фото — обрабатываем
+    # 2. Получаем модификаторы, если переданы
+    modifiers = []
+    if product.modifier_ids:
+        modifiers = await db_get_modifiers_by_ids(db, product.modifier_ids)
+
+    # 3. Создаём товар
+    product_obj = await db_create_products(db, product, modifiers=modifiers)
+
+    # 4. Если передано фото — валидируем и копируем в постоянную зону товара
     if product.image:
         await validate_image_in_minio(product.image.object_name, product.image.size, product.image.mime)
 
-        # Копируем temp → products/{id}/
         ext = Path(product.image.filename).suffix.lower()
         if not ext:
             ext = ".jpg"
@@ -104,7 +144,7 @@ async def service_create_products(db: AsyncSession, product: RequestCreateProduc
         product_obj.image_mime = product.image.mime
         product_obj.image_size_bytes = product.image.size
 
-    # 3. Коммитим
+    # 5. Коммитим
     try:
         await db.commit()
         await db.refresh(product_obj)
@@ -115,33 +155,62 @@ async def service_create_products(db: AsyncSession, product: RequestCreateProduc
         await db.rollback()
         raise HTTPException(500, "Problem with image storage")
 
-    # Генерируем presigned GET URL для фото
-    if product_obj.image_object_name:
-        product_obj.image_url = minio_client.presigned_get_object(
-            bucket_name=BUCKET,
-            object_name=product_obj.image_object_name,
-            expires=timedelta(hours=1),
-        )
-    else:
-        product_obj.image_url = None
-
-    return product_obj
+    return _attach_image_url(product_obj)
 
 
-async def service_get_all_categories(db: AsyncSession):
+# --- Категории ---
+
+async def service_get_all_categories(db: AsyncSession) -> list:
     return await db_get_all_categories(db=db)
 
 
 async def service_create_category(db: AsyncSession, category: RequestCreateCategory):
     try:
-        category = await db_create_category(db=db, category=category)
+        category_obj = await db_create_category(db=db, category=category)
         await db.commit()
-        await db.refresh(category)
+        await db.refresh(category_obj)
     except IntegrityError:
         await db.rollback()
         raise HTTPException(400, "Category already exists")
-    return category
+    return category_obj
 
 
-async def service_get_all_products_via_category(db: AsyncSession, id_category: int):
-    return await db_get_all_products_via_category(db=db, id_category=id_category)
+async def service_get_all_products_via_category(
+    db: AsyncSession,
+    id_category: int,
+    available_only: bool = False,
+) -> list[Product]:
+    products = await db_get_all_products_via_category(db=db, id_category=id_category, available_only=available_only)
+    for p in products:
+        _attach_image_url(p)
+    return products
+
+
+# --- Модификаторы и соусы ---
+
+async def service_get_all_modifiers(db: AsyncSession, available_only: bool = False) -> list[Modifier]:
+    return await db_get_all_modifiers(db=db, available_only=available_only)
+
+
+async def service_create_modifier(db: AsyncSession, modifier: RequestCreateModifier) -> Modifier:
+    try:
+        mod_obj = await db_create_modifier(db=db, modifier=modifier)
+        await db.commit()
+        await db.refresh(mod_obj)
+        return mod_obj
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(400, "Modifier creation failed")
+
+
+async def service_update_modifier_availability(
+    db: AsyncSession,
+    id_modifier: int,
+    is_available: bool,
+) -> Modifier:
+    mod = await db_update_modifier_availability(db=db, id_modifier=id_modifier, is_available=is_available)
+    if not mod:
+        raise HTTPException(status_code=404, detail="Modifier not found")
+    await db.commit()
+    await db.refresh(mod)
+    return mod
